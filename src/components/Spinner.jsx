@@ -1,12 +1,15 @@
-// 📦 Spinner.jsx - Reusable Loading Component
+// Spinner.jsx
 import React from "react";
+import "./Spinner.css"; // Make sure this file exists
 
-const Spinner = () => {
+const Spinner = ({ message = "Loading..." }) => {
   return (
-    <div className="flex justify-center items-center py-10">
-      <div className="w-12 h-12 border-4 border-blue-500 border-dashed rounded-full animate-spin"></div>
+    <div className="flex flex-col items-center justify-center py-8 animate-fade-in">
+      <div className="vm-loader mb-3"></div>
+      <p className="text-sm text-gray-600">{message}</p>
     </div>
   );
 };
 
 export default Spinner;
+  

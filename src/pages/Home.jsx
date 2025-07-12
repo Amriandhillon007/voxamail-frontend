@@ -1,192 +1,307 @@
-import React, { useState, useEffect } from "react";
-import EmailList from "../components/EmailList";
-import BulkActions from "../components/BulkActions";
-import ChatBox from "../components/ChatBox";
-import VoiceButton from "../components/VoiceButton";
-import Spinner from "../components/Spinner";
-import Navbar from "../components/Navbar";
+// ✅ FINALIZED + WIRED Home.jsx (Relay Commands + AI Integration)
+import React, { useState, useEffect, useRef } from "react";
+import { useNavigate } from "react-router-dom";
 import toast, { Toaster } from "react-hot-toast";
-
-import {
-  getInbox,
-  getUnreadFiltered,
-  sendEmail,
-  markAsRead,
-  deleteEmails,
-  logoutUser,
-} from "../utils/api";
+import Navbar from "../components/Navbar";
+import Spinner from "../components/Spinner";
+import SummaryCard from "../components/SummaryCard";
+import SenderCard from "../components/SenderCard";
+import SmartSearchBar from "../components/SmartSearchBar";
+import VoxaAIPanel from "../components/VoxaAIPanel";
+import ComposePanel from "../components/ComposePanel";
+import VoxaSuggestionsPanelFloating from "../components/VoxaSuggestionsPanelFloating";
+import { PanelGroup, Panel, PanelResizeHandle } from "react-resizable-panels";
 
 const Home = () => {
-  const [emails, setEmails] = useState([]);
   const [accessToken, setAccessToken] = useState(null);
   const [refreshToken, setRefreshToken] = useState(null);
   const [email, setEmail] = useState(null);
-  const [filterForm, setFilterForm] = useState({ sender: "", after: "", before: "" });
   const [loading, setLoading] = useState(false);
+  const [loadingMessage, setLoadingMessage] = useState("Loading...");
   const [error, setError] = useState("");
+  const [summaryResult, setSummaryResult] = useState("");
+  const [groupedSenders, setGroupedSenders] = useState([]);
+  const [filteredSender, setFilteredSender] = useState(null);
+  const [zenMode, setZenMode] = useState(false);
+  const [previousGrouped, setPreviousGrouped] = useState([]);
+  const scrollRef = useRef();
+  const [draftReply, setDraftReply] = useState(""); 
+  const navigate = useNavigate();
 
-  // ✅ On mount: Load tokens and guard session
   useEffect(() => {
     const token = localStorage.getItem("access_token");
     const refresh = localStorage.getItem("refresh_token");
     const userEmail = localStorage.getItem("email");
 
-    console.log("📦 Loaded from localStorage:", { token, refresh, userEmail });
-
-    if (token && refresh && userEmail && token !== "null" && refresh !== "null") {
+    if (token && userEmail && token !== "null" && userEmail !== "null") {
       setAccessToken(token);
       setRefreshToken(refresh);
       setEmail(userEmail);
-      loadInbox(userEmail);
+      loadInboxWithTokens(userEmail, token, refresh);
     } else {
-      toast.error("🔒 Session expired. Redirecting to login...");
-      setTimeout(() => {
-        window.location.href = "/auth/login";
-      }, 1500);
+      toast.error("🔒 Session expired. Redirecting...");
+      navigate("/intro");
     }
-  }, []);
+  }, [navigate]);
 
-  // ✅ Fetch inbox emails
-  const loadInbox = async (email) => {
+  const loadInboxWithTokens = async (email, accessToken, refreshToken) => {
     setLoading(true);
     setError("");
+    setLoadingMessage("📬 Fetching your full inbox...");
     try {
-      const data = await getInbox(email);
-      setEmails(data.emails || []);
+      const res = await fetch(`http://localhost:8000/emails/all?email=${email}`);
+      if (!res.ok) throw new Error("Inbox fetch failed");
+      const data = await res.json();
+      setGroupedSenders(data.senders || []);
+      setPreviousGrouped(data.senders || []);
     } catch (err) {
-      toast.error("⚠️ Failed to load inbox.");
-      setError("Could not load inbox.");
+      console.error("❌ Inbox fetch error:", err);
+      toast.error("⚠️ Could not fetch inbox.");
+      setError("📭 Failed to load inbox.");
     } finally {
       setLoading(false);
     }
   };
 
-  // ✅ Fetch unread + filtered
-  const fetchFilteredEmails = async (sender, after, before) => {
+  const handleSmartSearch = async ({ senders = [], after, before }) => {
+    if (!senders.length) return toast.error("Please enter at least one sender.");
     setLoading(true);
-    setError("");
-
-    if (!accessToken || !refreshToken) {
-      toast.error("🔒 Missing tokens. Please log in again.");
-      setError("Missing access or refresh token.");
-      setLoading(false);
-      return;
-    }
-
+    setLoadingMessage("🔎 Searching across multiple senders...");
     try {
-      const data = await getUnreadFiltered({
-        accessToken,
-        refreshToken,
-        sender,
-        after,
-        before,
-      });
-      setEmails(data.emails || []);
-    } catch (err) {
-      toast.error("❌ Filter fetch failed.");
-      setError("Could not fetch filtered emails.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // ✅ Bulk action executor
-  const handleBulkAction = async (actionType) => {
-    if (!email || emails.length === 0) return toast("No emails to act on.");
-    const ids = emails.map((e) => e.id);
-    try {
-      const result =
-        actionType === "mark_as_read"
-          ? await markAsRead(email, ids)
-          : await deleteEmails(email, ids);
-
-      if (result.status === "success") {
-        toast.success(`${actionType.replace("_", " ")} successful.`);
-        loadInbox(email);
-      } else {
-        toast.error("⚠️ Action failed.");
+      const results = [];
+      for (const sender of senders) {
+        let url = `http://localhost:8000/emails/by-sender?email=${email}&sender=${encodeURIComponent(sender)}`;
+        if (after) url += `&after=${after}`;
+        if (before) url += `&before=${before}`;
+        const res = await fetch(url);
+        if (!res.ok) continue;
+        const data = await res.json();
+        const combined = [...(data.last_week || []), ...(data.last_month || []), ...(data.older || [])];
+        results.push({ sender, emails: combined });
       }
-    } catch {
-      toast.error("❌ Network/API error.");
+      if (results.length === 0) toast.error("No results found.");
+      if (results.length === 1) {
+        setFilteredSender(results[0]);
+      } else {
+        setPreviousGrouped(groupedSenders);
+        setGroupedSenders(results);
+        setFilteredSender(null);
+      }
+      scrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+    } catch (err) {
+      console.error("❌ Smart Search error:", err);
+      toast.error("Failed to fetch emails.");
+    } finally {
+      setLoading(false);
     }
   };
 
-  const handleFilterSubmit = (e) => {
-    e.preventDefault();
-    const { sender, after, before } = filterForm;
-    fetchFilteredEmails(sender, after, before);
+  const clearFilteredSender = () => {
+    setGroupedSenders(previousGrouped);
+    setFilteredSender(null);
+    setSummaryResult("");
   };
 
-  const handleLogout = () => {
-    logoutUser(email);
-    window.location.href = "/";
+  const relayCommand = async (type, payload) => {
+    switch (type) {
+      case "fetch_emails_from_sender":
+        if (!payload.sender) return;
+        setLoading(true);
+        setLoadingMessage(`Fetching emails from ${payload.sender}...`);
+        try {
+          const res = await fetch(
+            `http://localhost:8000/emails/by-sender?email=${email}&sender=${encodeURIComponent(payload.sender)}`
+          );
+          const data = await res.json();
+          const combined = [...(data.last_week || []), ...(data.last_month || []), ...(data.older || [])];
+          setFilteredSender({ sender: payload.sender, emails: combined });
+          scrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+        } catch (err) {
+          console.error("Failed to fetch sender emails:", err);
+          toast.error("❌ Could not fetch emails.");
+        } finally {
+          setLoading(false);
+        }
+        break;
+
+      case "mark_emails_read":
+        if (!payload.threadIds || payload.threadIds.length === 0) return;
+        try {
+          const res = await fetch("http://localhost:8000/emails/mark-read", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              access_token: accessToken,
+              thread_ids: payload.threadIds,
+            }),
+          });
+          const data = await res.json();
+          toast.success(`✅ Marked ${data.updated || 0} emails as read`);
+          loadInboxWithTokens(email, accessToken, refreshToken);
+        } catch (err) {
+          console.error("❌ Failed to mark as read", err);
+          toast.error("Failed to mark emails as read.");
+        }
+        break;
+
+      case "send_to_compose":
+        if (!payload.reply) return;
+        toast.success("✉️ Reply sent to Compose Panel");
+        setDraftReply(payload.reply);
+        break;
+
+      default:
+        console.warn("Unknown relay command:", type);
+    }
   };
+
+  useEffect(() => {
+    document.body.style.overflow = zenMode ? "hidden" : "auto";
+  }, [zenMode]);
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <Navbar />
+    <div className="min-h-screen bg-gradient-to-tr from-[#eef2f7] to-[#f9fafe]">
+      <Navbar
+        onLogout={() => {
+          localStorage.clear();
+          navigate("/intro");
+        }}
+      />
       <Toaster position="top-right" />
-
-      <main className="p-4 max-w-4xl mx-auto">
-        <div className="flex justify-between items-center mb-4">
-          <div>
-            <h1 className="text-3xl font-bold text-indigo-700">Unread Emails</h1>
-            <p className="text-sm text-gray-500">Filter and manage inbox with voice + AI</p>
-          </div>
-          <button
-            onClick={handleLogout}
-            className="bg-red-500 text-white px-3 py-1 rounded text-sm"
-          >
-            Logout
-          </button>
+      <main className="p-4 sm:p-6 max-w-[100vw] mx-auto">
+        <div className="mb-4 sm:mb-6">
+          <h1 className="text-3xl font-extrabold text-indigo-700">📥 VoxaMail: AI Inbox</h1>
+          <p className="text-sm text-gray-500">Summarized. Prioritized. Humanized.</p>
         </div>
 
-        <form onSubmit={handleFilterSubmit} className="flex flex-wrap gap-2 mb-4">
-          <input
-            type="text"
-            name="sender"
-            placeholder="Sender (e.g. Amazon)"
-            className="border px-3 py-2 rounded cursor-text"
-            value={filterForm.sender}
-            onChange={(e) => setFilterForm({ ...filterForm, sender: e.target.value })}
-          />
-          <input
-            type="date"
-            name="after"
-            className="border px-3 py-2 rounded cursor-text"
-            value={filterForm.after}
-            onChange={(e) => setFilterForm({ ...filterForm, after: e.target.value })}
-          />
-          <input
-            type="date"
-            name="before"
-            className="border px-3 py-2 rounded cursor-text"
-            value={filterForm.before}
-            onChange={(e) => setFilterForm({ ...filterForm, before: e.target.value })}
-          />
-          <button type="submit" className="bg-indigo-600 text-white px-4 py-2 rounded">
-            Filter
-          </button>
-        </form>
+        {error && (
+          <div className="bg-red-100 text-red-800 p-4 rounded-lg mb-4 shadow">
+            {error}
+            <button
+              onClick={() => loadInboxWithTokens(email, accessToken, refreshToken)}
+              className="ml-4 text-sm font-medium underline"
+            >
+              🔄 Retry
+            </button>
+          </div>
+        )}
 
-        <BulkActions
-          accessToken={accessToken}
-          filterForm={filterForm}
-          onExecute={handleBulkAction}
-          filteredCount={emails.length}
-          unreadCount={emails.filter((e) => e.snippet).length}
-        />
+        <SummaryCard summary={summaryResult} onClear={() => setSummaryResult("")} />
 
-        {error && <p className="text-red-500 mb-2">{error}</p>}
-        {loading ? <Spinner /> : <EmailList emails={emails} />}
+        <PanelGroup
+          direction="horizontal"
+          className="rounded-xl border"
+          style={{ height: "calc(100vh - 220px)", overflow: "hidden" }}
+        >
+          {/* Left Panel */}
+          <Panel defaultSize={30} minSize={20}>
+            <div className="flex flex-col h-full">
+              <SmartSearchBar onSearch={handleSmartSearch} />
+              <div className="px-2 py-1 text-sm text-gray-600 flex justify-between">
+                <button
+                  onClick={() => setZenMode(!zenMode)}
+                  className="underline text-indigo-600 hover:text-indigo-800"
+                >
+                  {zenMode ? "🔽 Collapse All" : "🧘 Expand All"}
+                </button>
+                {(filteredSender || (previousGrouped.length > 0 && groupedSenders !== previousGrouped)) && (
+                  <button
+                    onClick={clearFilteredSender}
+                    className="text-xs text-blue-500 underline"
+                  >
+                    🔙 Back to Inbox
+                  </button>
+                )}
+              </div>
+              <div className="flex-1 overflow-y-auto pr-2 relative" ref={scrollRef}>
+                {loading && !filteredSender && (
+                  <div className="absolute inset-0 flex items-center justify-center bg-white bg-opacity-80 z-10">
+                    <Spinner message={loadingMessage} />
+                  </div>
+                )}
+                {!loading && filteredSender ? (
+                  <SenderCard
+                    sender={filteredSender.sender}
+                    userEmail={email}
+                    accessToken={accessToken}
+                    emails={filteredSender.emails}
+                    onRefresh={() => loadInboxWithTokens(email, accessToken, refreshToken)}
+                    zenMode={zenMode}
+                  />
+                ) : (
+                  groupedSenders
+                    .sort((a, b) => {
+                      const pinned = JSON.parse(localStorage.getItem("pinned_senders") || "[]");
+                      return pinned.includes(b.sender) - pinned.includes(a.sender);
+                    })
+                    .map((group, idx) => (
+                      <SenderCard
+                        key={idx}
+                        sender={group.sender}
+                        userEmail={email}
+                        accessToken={accessToken}
+                        onRefresh={() => loadInboxWithTokens(email, accessToken, refreshToken)}
+                        onSummaryGenerated={setSummaryResult}
+                        zenMode={zenMode}
+                        enableMood
+                        enableUrgency
+                        enableDensity
+                      />
+                    ))
+                )}
+              </div>
+            </div>
+          </Panel>
 
-        <h2 className="text-2xl font-bold mt-8 mb-4">Ask Voxa AI</h2>
-        {accessToken ? <ChatBox accessToken={accessToken} /> : <p>🔒 Login to use AI Assistant</p>}
+          <PanelResizeHandle className="w-1 bg-gray-300 hover:bg-indigo-400 cursor-col-resize" />
+
+          {/* Middle Panel */}
+          <Panel defaultSize={25} minSize={20}>
+            <div className="h-full px-4 overflow-hidden">
+              {accessToken ? (
+                <VoxaAIPanel
+                  accessToken={accessToken}
+                  userEmail={email}
+                  onReplyGenerated={setDraftReply}
+                  onRelayCommand={relayCommand} // ✅ New
+                  features={{
+                    enableInboxDNA: true,
+                    enablePriorityRanker: true,
+                    enableMoodClustering: true,
+                  }}
+                />
+              ) : (
+                <div className="text-center text-gray-400 mt-12">
+                  🔒 Login to use Voxa AI Assistant
+                </div>
+              )}
+            </div>
+          </Panel>
+
+          <PanelResizeHandle className="w-1 bg-gray-300 hover:bg-indigo-400 cursor-col-resize" />
+
+          {/* Right Panel */}
+          <Panel defaultSize={20} minSize={20}>
+            <div className="h-full px-4 flex flex-col space-y-4 overflow-hidden">
+              <div className="bg-white shadow-xl rounded-2xl p-6 flex-1">
+                {accessToken ? (
+                  <ComposePanel
+                    userEmail={email}
+                    accessToken={accessToken}
+                    injectedReply={draftReply}
+                  />
+                ) : (
+                  <div className="text-center text-gray-400">🔒 Login to compose</div>
+                )}
+              </div>
+
+              <div className="bg-white shadow-xl rounded-2xl p-6 flex-1">
+                <VoxaSuggestionsPanelFloating email={email} />
+              </div>
+            </div>
+          </Panel>
+        </PanelGroup>
       </main>
-
-      <footer className="bg-white p-4 text-center text-sm text-gray-400">
-        {emails.length > 0 ? <VoiceButton emails={emails} /> : "Loading voice tools..."}
-      </footer>
     </div>
   );
 };

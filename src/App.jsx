@@ -1,8 +1,7 @@
-// 📲 App.jsx - Full Routing for VoxaMail (Final Fixed Version)
+// 📲 App.jsx – Cleaned & Fixed Full Routing
 
 import React, { lazy, Suspense } from "react";
-import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
-
+import { Routes, Route, Navigate } from "react-router-dom";
 
 // Pages
 import IntroPage from "./pages/IntroPage";
@@ -12,6 +11,7 @@ import Home from "./pages/Home";
 import About from "./pages/About";
 import SendEmail from "./pages/SendEmail";
 import AuthCallback from "./pages/AuthCallback";
+import ProtectedRoute from "./components/ProtectedRoute";
 
 const Terms = lazy(() => import("./pages/Terms"));
 const Privacy = lazy(() => import("./pages/Privacy"));
@@ -23,12 +23,28 @@ function App() {
         <Route path="/" element={<Navigate to="/intro" />} />
         <Route path="/intro" element={<IntroPage />} />
         <Route path="/login" element={<Login />} />
-        <Route path="/home" element={<Home />} />
-        <Route path="/about" element={<About />} />
-        <Route path="/send" element={<SendEmail />} />
         <Route path="/auth/callback" element={<AuthCallback />} />
         <Route path="/terms" element={<Terms />} />
         <Route path="/privacy" element={<Privacy />} />
+        <Route path="/about" element={<About />} />
+        <Route path="/send" element={<SendEmail />} />
+
+        {/* ✅ Protect /home: only allow if consent given */}
+        <Route
+  path="/home"
+  element={
+    <ProtectedRoute>
+      <Home />
+    </ProtectedRoute>
+  }
+/>
+
+
+
+
+
+
+        {/* ✅ Catch-all route */}
         <Route
           path="*"
           element={

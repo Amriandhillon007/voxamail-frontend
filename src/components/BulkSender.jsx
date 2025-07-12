@@ -1,42 +1,54 @@
-// ✅ BulkSender.jsx – Final Private Beta Version (Filtered, Confirmed, Refreshed)
 import React, { useState } from "react";
 import axios from "axios";
 import ConfirmModal from "./ConfirmModal";
 import toast from "react-hot-toast";
+import { useSenderQuota } from "../hooks/useSenderQuota";
 
 const BulkSender = ({ accessToken, filterForm, onRefresh }) => {
+  const sender = filterForm.sender || "Unknown Sender";
   const [isModalOpen, setModalOpen] = useState(false);
   const [actionType, setActionType] = useState(null);
   const [loading, setLoading] = useState(false);
 
+  const quota = useSenderQuota(sender);
+
   const handleBulkAction = async (type) => {
-    if (!accessToken) {
-      toast.error("❌ Access token missing. Please log in again.");
+    if (!accessToken || accessToken === "null") {
+      toast.error("❌ Missing token. Please log in again.");
+      return;
+    }
+
+    if (!quota.canProceed()) {
+      toast.error(
+        `🚫 Daily limit reached for ${sender}. Max ${quota.maxPerSender} bulk actions per day.`
+      );
       return;
     }
 
     setLoading(true);
     try {
       const command = {
-        action: type === "delete" ? "delete" : "mark_as_read",
+        action: type,
         ...filterForm,
-        filter: "unread", // optional override
+        filter: "unread",
       };
 
-      const response = await axios.post("http://localhost:8000/execute", {
+      const res = await axios.post("http://localhost:8000/execute", {
         access_token: accessToken,
         command,
       });
 
-      if (response.data?.status === "success") {
+      if (res.data?.status === "success") {
         toast.success(`✅ Emails ${type === "delete" ? "deleted" : "marked as read"}`);
-        onRefresh?.(); // Refetch filtered emails
+        quota.recordUsage();
+        onRefresh?.();
       } else {
-        toast.error("❌ Action failed. Please try again.");
+        toast.error("❌ Action failed. Try again.");
+        console.warn("⚠️ Backend response:", res.data);
       }
-    } catch (error) {
-      console.error("Bulk action error:", error);
-      toast.error("❌ Failed to perform bulk action.");
+    } catch (err) {
+      console.error("🔥 API Error:", err);
+      toast.error("❌ Could not complete action.");
     } finally {
       setLoading(false);
     }
@@ -53,22 +65,26 @@ const BulkSender = ({ accessToken, filterForm, onRefresh }) => {
   };
 
   return (
-    <div className="mt-4 flex gap-3 flex-wrap">
+    <div className="mt-4 flex gap-3 flex-wrap items-center">
       <button
         onClick={() => openModal("mark_as_read")}
         className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded shadow"
-        disabled={loading}
+        disabled={loading || !quota.canProceed()}
       >
-        📩 Mark Filtered as Read
+        📩 Mark as Read (sender)
       </button>
 
       <button
         onClick={() => openModal("delete")}
         className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded shadow"
-        disabled={loading}
+        disabled={loading || !quota.canProceed()}
       >
-        🗑️ Delete Filtered Emails
+        🗑️ Delete Emails (sender)
       </button>
+
+      <span className="text-sm text-gray-500">
+        {quota.remaining} action{quota.remaining !== 1 ? "s" : ""} left today for this sender
+      </span>
 
       <ConfirmModal
         isOpen={isModalOpen}
@@ -77,8 +93,8 @@ const BulkSender = ({ accessToken, filterForm, onRefresh }) => {
         title="Confirm Bulk Action"
         message={
           actionType === "delete"
-            ? "Are you sure you want to delete all filtered emails?"
-            : "Are you sure you want to mark all filtered emails as read?"
+            ? "Are you sure you want to delete all filtered emails from this sender?"
+            : "Are you sure you want to mark all filtered emails from this sender as read?"
         }
       />
     </div>

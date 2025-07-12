@@ -1,15 +1,43 @@
-// 📦 VoxaMail - BulkActions.jsx
+// 📦 VoxaMail – BulkActions.jsx (Phase 6.6.2 Upgrade)
 import React, { useState } from "react";
-import { markAsRead, deleteEmails, summarizeEmails } from "../utils/api";
 import toast from "react-hot-toast";
+import { markAsRead, deleteEmails, summarizeEmails } from "../utils/api";
 import SummaryModal from "./SummaryModal";
+import { useSenderQuota } from "../hooks/useSenderQuota";
 
-const BulkActions = ({ accessToken, filterForm, onExecute, filteredCount, unreadCount }) => {
+// ✅ Reusable button component
+const ActionButton = ({ icon, label, onClick, color }) => {
+  const colorMap = {
+    green: "from-green-400 to-green-500",
+    red: "from-red-500 to-red-600",
+    indigo: "from-indigo-500 to-purple-600",
+  };
+
+  return (
+    <button
+      onClick={onClick}
+      className={`flex items-center gap-2 text-white bg-gradient-to-r ${colorMap[color]} px-4 py-2 rounded-full shadow-md hover:scale-105 transition-all text-sm`}
+    >
+      <span className="text-lg">{icon}</span>
+      <span>{label}</span>
+    </button>
+  );
+};
+
+const BulkActions = ({
+  accessToken,
+  filterForm,
+  onExecute,
+  filteredCount,
+  unreadCount,
+  onSummaryGenerated,
+}) => {
   const email = localStorage.getItem("email");
   const [summary, setSummary] = useState(null);
-  const [modalOpen, setModalOpen] = useState(false);
+  const [isModalOpen, setIsModalOpen] = useState(false);
 
-  // ✅ Reusable fetch logic for current filter
+  const { canRunAction, recordAction, remaining } = useSenderQuota(filterForm.sender, 3);
+
   const fetchUnreadMessageIds = async () => {
     const refreshToken = localStorage.getItem("refresh_token");
 
@@ -32,87 +60,100 @@ const BulkActions = ({ accessToken, filterForm, onExecute, filteredCount, unread
     return data.emails?.map((email) => email.id) || [];
   };
 
-  // ✅ Mark as read action
-  const handleMarkAllRead = async () => {
-    if (!email || !accessToken) return toast.error("Missing session info.");
-    try {
+  const withQuotaCheck = async (actionName, handler) => {
+    if (!canRunAction()) {
+      toast.error(`🚫 Daily quota of 3 ${actionName} actions reached for this sender.`);
+      return;
+    }
+
+    await handler();
+    recordAction();
+  };
+
+  const handleMarkAllRead = () =>
+    withQuotaCheck("mark-as-read", async () => {
+      if (!email || !accessToken) return toast.error("Missing session info.");
       toast.loading("Marking emails as read...");
       const ids = await fetchUnreadMessageIds();
       if (ids.length === 0) return toast("No unread emails matched.");
-      await markAsRead(email, ids);
+      await markAsRead(email, ids.slice(0, 20));
       toast.dismiss();
       toast.success("✅ Emails marked as read.");
       onExecute?.("mark_as_read");
-    } catch (err) {
-      toast.dismiss();
-      toast.error("❌ Failed to mark as read.");
-    }
-  };
+    });
 
-  // ✅ Delete action
-  const handleDeleteFiltered = async () => {
-    if (!email || !accessToken) return toast.error("Missing session info.");
-    try {
-      toast.loading("Deleting filtered emails...");
+  const handleDeleteFiltered = () =>
+    withQuotaCheck("delete", async () => {
+      if (!email || !accessToken) return toast.error("Missing session info.");
+      toast.loading("Deleting emails...");
       const ids = await fetchUnreadMessageIds();
       if (ids.length === 0) return toast("No emails matched.");
-      await deleteEmails(email, ids);
+      await deleteEmails(email, ids.slice(0, 20));
       toast.dismiss();
       toast.success("🗑️ Emails deleted.");
       onExecute?.("delete");
-    } catch (err) {
-      toast.dismiss();
-      toast.error("❌ Failed to delete emails.");
-    }
-  };
+    });
 
-  // ✅ Summarize action
-  const handleSummarize = async () => {
-    if (!email || !accessToken) return toast.error("Missing session info.");
-    try {
-      toast.loading("Summarizing emails with AI...");
-      const ids = await fetchUnreadMessageIds();
-      if (ids.length === 0) return toast("No emails to summarize.");
-      const result = await summarizeEmails({ email, messageIds: ids });
-      setSummary(result.summary || "No summary returned.");
-      setModalOpen(true);
-      toast.dismiss();
-    } catch (err) {
-      toast.dismiss();
-      toast.error("❌ Failed to summarize emails.");
-    }
-  };
+  const handleSummarize = () =>
+    withQuotaCheck("summarize", async () => {
+      if (!email || !accessToken) return toast.error("Missing session info.");
+      try {
+        toast.loading("Summarizing emails with AI...");
+        const ids = await fetchUnreadMessageIds();
+        if (ids.length === 0) return toast("No emails to summarize.");
+        const result = await summarizeEmails({ email, messageIds: ids.slice(0, 20) });
+        setSummary(result.summary || "No summary returned.");
+        setIsModalOpen(true);
+        toast.dismiss();
+        if (onSummaryGenerated) onSummaryGenerated(result.summary || "No summary returned.");
+        toast.success("✅ Emails summarized.");
+      } catch (err) {
+        toast.dismiss();
+        toast.error("❌ Failed to summarize.");
+      }
+    });
 
   return (
-    <div className="flex gap-4 mb-4 flex-wrap">
-      <button
-        onClick={handleMarkAllRead}
-        className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded"
-      >
-        ✅ Mark Filtered as Read ({filteredCount})
-      </button>
+    <div className="flex flex-wrap justify-between items-center gap-4 bg-white/70 backdrop-blur-md border border-gray-200 rounded-2xl px-4 py-3 shadow-sm mb-6">
+      <div className="flex flex-wrap gap-3 items-center">
+        <ActionButton
+          icon="✅"
+          label={`Mark Read (${Math.min(filteredCount, 20)})`}
+          onClick={handleMarkAllRead}
+          color="green"
+        />
+        <ActionButton
+          icon="🗑️"
+          label={`Delete (${Math.min(filteredCount, 20)})`}
+          onClick={handleDeleteFiltered}
+          color="red"
+        />
+        <ActionButton
+          icon="🧠"
+          label={`Summarize (${Math.min(filteredCount, 20)})`}
+          onClick={handleSummarize}
+          color="indigo"
+        />
+      </div>
 
-      <button
-        onClick={handleDeleteFiltered}
-        className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded"
-      >
-        🗑️ Delete Filtered Emails ({filteredCount})
-      </button>
+      <div className="text-sm text-gray-600 flex flex-col md:flex-row gap-2 items-end md:items-center ml-auto">
+        {filterForm.sender && (
+          <span className="bg-indigo-100 text-indigo-800 px-3 py-1 rounded-full text-xs font-medium">
+            📤 Sender: {filterForm.sender}
+          </span>
+        )}
+        <span>
+          📅 Daily Quota Left:{" "}
+          <span className="font-semibold text-red-600">{remaining} / 3</span>
+        </span>
+        <span>
+          ✉️ Total Unread:{" "}
+          <span className="font-semibold text-indigo-700">{unreadCount}</span>
+        </span>
+      </div>
 
-      <button
-        onClick={handleSummarize}
-        className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded"
-      >
-        🧠 Summarize ({filteredCount})
-      </button>
-
-      <span className="text-sm text-gray-500 ml-auto self-center">
-        Total Unread: {unreadCount}
-      </span>
-
-      {/* 🧠 Summary Modal */}
-      {modalOpen && (
-        <SummaryModal summary={summary} onClose={() => setModalOpen(false)} />
+      {isModalOpen && (
+        <SummaryModal summary={summary} onClose={() => setIsModalOpen(false)} />
       )}
     </div>
   );

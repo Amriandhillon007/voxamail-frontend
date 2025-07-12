@@ -1,86 +1,126 @@
-// src/components/VoiceButton.jsx
+// frontend/src/components/VoiceButton.jsx – ✅ Phase 6.6 Voice Reader Assistant
 import React, { useState } from "react";
+import { readEmailAloud, stopReading, getVoiceOptions } from "../utils/tts";
 
 const VoiceButton = ({ emails }) => {
   const [selectedIndex, setSelectedIndex] = useState(null);
   const [speaking, setSpeaking] = useState(false);
+  const [selectedVoice, setSelectedVoice] = useState("coqui-default");
+  const [status, setStatus] = useState("");
+  const [cancelRequested, setCancelRequested] = useState(false);
 
-  const speakEmail = (email) => {
-    // Stop any ongoing speech
-    window.speechSynthesis.cancel();
+  const speak = async (email) => {
+    if (!email) return;
 
-    // Use proper fallbacks
-    const sender = email.from || email.sender || "Unknown sender";
-    const subject = email.subject || "No subject";
-    const snippet = email.snippet || "No preview available";
+    setSpeaking(true);
+    setStatus("🔊 Reading selected email...");
 
-    console.log("🟢 Reading email:", { sender, subject, snippet });
-
-    const text = `From ${sender}. Subject: ${subject}. Preview: ${snippet}.`;
-    const utterance = new SpeechSynthesisUtterance(text);
-
-    utterance.onstart = () => setSpeaking(true);
-    utterance.onend = () => setSpeaking(false);
-    utterance.onerror = (e) => {
-      console.error("🔴 Speech error:", e.error);
+    await readEmailAloud(email, selectedVoice, () => {
       setSpeaking(false);
-    };
-
-    window.speechSynthesis.speak(utterance);
+      setStatus("✅ Finished reading.");
+    });
   };
 
   const stopSpeaking = () => {
-    window.speechSynthesis.cancel();
+    stopReading();
+    setCancelRequested(true);
     setSpeaking(false);
+    setStatus("🛑 Reading stopped.");
+  };
+
+  const handleReadAll = async () => {
+    if (!emails || emails.length === 0) return;
+
+    setSpeaking(true);
+    setCancelRequested(false);
+    setStatus("🔁 Reading all emails...");
+
+    for (let i = 0; i < emails.length; i++) {
+      if (cancelRequested) break;
+
+      const email = emails[i];
+      if (!email || !email.subject || !email.snippet) continue;
+
+      setStatus(`📧 Reading ${i + 1} of ${emails.length}...`);
+
+      await new Promise((resolve) => {
+        readEmailAloud(email, selectedVoice, resolve);
+      });
+
+      await new Promise((res) => setTimeout(res, 500));
+    }
+
+    setSpeaking(false);
+    setCancelRequested(false);
+    setStatus("✅ Done reading all.");
   };
 
   return (
-    <div className="mt-4 max-w-xl mx-auto text-center">
-      <label className="block mb-2 font-medium text-gray-700">
-        Select an email to read aloud:
-      </label>
+    <div className="mt-6 bg-white p-4 rounded-xl shadow text-center max-w-xl mx-auto">
+      <h3 className="font-semibold text-gray-700 mb-2">🔊 AI Voice Assistant</h3>
 
-      <select
-        onChange={(e) => setSelectedIndex(e.target.value)}
-        className="p-2 rounded border w-full text-sm"
-      >
-        <option value="">-- Choose Email --</option>
-        {emails.map((email, idx) => (
-          <option key={idx} value={idx}>
-            {email.subject?.slice(0, 60) || "No subject"}
-          </option>
-        ))}
-      </select>
-
-      <div className="flex justify-center items-center gap-3 mt-3">
-        <button
-          onClick={() => {
-            if (selectedIndex !== null && emails[selectedIndex]) {
-              speakEmail(emails[selectedIndex]);
-            }
-          }}
-          className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded transition"
+      {emails.length === 0 ? (
+        <p className="text-sm text-gray-500 italic mb-4">📭 No emails available to read.</p>
+      ) : (
+        <select
+          onChange={(e) => setSelectedIndex(Number(e.target.value))}
+          className="p-2 w-full rounded border text-sm mb-3"
         >
-          🔊 Read Email
+          <option value="">-- Select an Email to Read --</option>
+          {emails.map((email, idx) => (
+            <option key={idx} value={idx}>
+              {email.subject?.slice(0, 60) || "No subject"}
+            </option>
+          ))}
+        </select>
+      )}
+
+      <div className="flex flex-col sm:flex-row justify-center gap-3 mb-3">
+        <button
+          onClick={() => speak(emails[selectedIndex])}
+          disabled={selectedIndex === null}
+          className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded disabled:opacity-50"
+        >
+          ▶️ Read Selected
+        </button>
+
+        <button
+          onClick={handleReadAll}
+          disabled={emails.length === 0}
+          className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded"
+        >
+          📢 Read All
         </button>
 
         <button
           onClick={stopSpeaking}
-          disabled={!speaking}
           className={`${
-            speaking
-              ? "bg-red-600 hover:bg-red-700"
-              : "bg-gray-300 cursor-not-allowed"
-          } text-white px-4 py-2 rounded transition`}
+            speaking ? "bg-red-600 hover:bg-red-700" : "bg-gray-400"
+          } text-white px-4 py-2 rounded`}
         >
           🛑 Stop
         </button>
       </div>
 
-      {speaking && (
-        <p className="text-sm text-indigo-600 mt-2 animate-pulse">
-          📣 Speaking...
-        </p>
+      <div className="text-left mb-2">
+        <label className="block text-sm font-medium mb-1">🎙️ Choose Voice:</label>
+        <select
+          value={selectedVoice}
+          onChange={(e) => setSelectedVoice(e.target.value)}
+          className="w-full p-2 rounded border"
+        >
+          {getVoiceOptions().map((voice) => (
+            <option key={voice.value} value={voice.value}>
+              {voice.label}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {status && (
+        <div className="mt-3 text-indigo-600 font-medium animate-pulse">
+          {status}
+        </div>
       )}
     </div>
   );
